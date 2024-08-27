@@ -1,0 +1,198 @@
+using EasyModbus;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Globalization;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using System.Windows.Forms.DataVisualization.Charting;
+
+namespace spm3_modbusRTU_PMS
+{
+    public partial class Form1 : Form
+    {
+        private readonly int[] meterIDs = { 9, 201, 102, 111, 112, 113, 114, 115, 116, 117, 118, 223, 224, 131, 132, 133, 134, 141, 244, 254 };
+        private readonly string csvDirectory = @"D:\SPM3\C#\spm3data_new\";
+        private bool stopReading = false;
+
+        // 30分鐘記錄的變數
+        private float minVln_a, minVln_b, minVln_c, minVln_avg;
+        private float minVll_ab, minVll_bc, minVll_ca, minVll_avg;
+        private float minPF, minFrequency;
+        private float maxKW_a, maxKW_b, maxKW_c, maxKW_tot;
+        private float maxKvar_a, maxKvar_b, maxKvar_c, maxKvar_tot;
+        private float maxKVA_a, maxKVA_b, maxKVA_c, maxKVA_tot;
+        private float maxI_a, maxI_b, maxI_c, maxI_avg;
+        private float lastKWh, lastKvarh, lastKVAh;
+
+
+        public Form1()
+        {
+            InitializeComponent();
+            Reset30MinVariables(); // 在初始化時重置30分鐘變數
+        }
+
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            Timer timer = new Timer();
+            timer.Interval = 1000; // 每秒檢查一次時間
+            timer.Tick += new EventHandler(TimerTick);
+            timer.Start();
+        }
+
+        private void TimerTick(object sender, EventArgs e)
+        {
+            DateTime now = DateTime.Now;
+
+            // 每3秒執行一次數據讀取
+            if (now.Second % 3 == 0)
+            {
+                ReadAndRecordData(now);
+            }
+
+            // 每30分鐘執行一次特殊處理並記錄
+            if (now.Minute % 30 == 0 && now.Second == 0)
+            {
+                Record30MinData(now);
+            }
+        }
+
+        
+        private void ReadAndRecordData(DateTime now)
+        {
+            foreach (int meterID in meterIDs)
+            {
+                try
+                {
+                    // 創建ModbusClient實例並連接
+                    ModbusClient modbusClient = new ModbusClient("COM3");
+                    modbusClient.Baudrate = 19200;
+                    modbusClient.Parity = System.IO.Ports.Parity.None;
+                    modbusClient.StopBits = System.IO.Ports.StopBits.One;
+                    modbusClient.UnitIdentifier = (byte)meterID;
+                    modbusClient.Connect();
+
+                    // 讀取浮點數寄存器 (這是你的數據讀取邏輯)
+                    int[] inputRegisters = modbusClient.ReadInputRegisters(4096, 64);
+
+                    // 轉換寄存器數據到浮點數
+                    float vln_a = ConvertRegistersToFloat(inputRegisters, 0);
+                    float vln_b = ConvertRegistersToFloat(inputRegisters, 2);
+                    float vln_c = ConvertRegistersToFloat(inputRegisters, 4);
+                    float vln_avg = ConvertRegistersToFloat(inputRegisters, 6);
+                    float vll_ab = ConvertRegistersToFloat(inputRegisters, 8);
+                    float vll_bc = ConvertRegistersToFloat(inputRegisters, 10);
+                    float vll_ca = ConvertRegistersToFloat(inputRegisters, 12);
+                    float vll_avg = ConvertRegistersToFloat(inputRegisters, 14);
+                    float i_a = ConvertRegistersToFloat(inputRegisters, 16);
+                    float i_b = ConvertRegistersToFloat(inputRegisters, 18);
+                    float i_c = ConvertRegistersToFloat(inputRegisters, 20);
+                    float i_avg = ConvertRegistersToFloat(inputRegisters, 22);
+                    float frequency = ConvertRegistersToFloat(inputRegisters, 24);
+                    float kW_a = ConvertRegistersToFloat(inputRegisters, 26);
+                    float kW_b = ConvertRegistersToFloat(inputRegisters, 28);
+                    float kW_c = ConvertRegistersToFloat(inputRegisters, 30);
+                    float kW_tot = ConvertRegistersToFloat(inputRegisters, 32);
+                    float kvar_a = ConvertRegistersToFloat(inputRegisters, 34);
+                    float kvar_b = ConvertRegistersToFloat(inputRegisters, 36);
+                    float kvar_c = ConvertRegistersToFloat(inputRegisters, 38);
+                    float kvar_tot = ConvertRegistersToFloat(inputRegisters, 40);
+                    float kVA_a = ConvertRegistersToFloat(inputRegisters, 42);
+                    float kVA_b = ConvertRegistersToFloat(inputRegisters, 44);
+                    float kVA_c = ConvertRegistersToFloat(inputRegisters, 46);
+                    float kVA_tot = ConvertRegistersToFloat(inputRegisters, 48);
+                    float pf = ConvertRegistersToFloat(inputRegisters, 50);
+                    float kWh = ConvertRegistersToFloat(inputRegisters, 52);
+                    float kvarh = ConvertRegistersToFloat(inputRegisters, 54);
+                    float kVAh = ConvertRegistersToFloat(inputRegisters, 56);
+
+                    // 更新30分鐘記錄的變數
+                    minVln_a = Math.Min(minVln_a, vln_a);
+                    minVln_b = Math.Min(minVln_b, vln_b);
+                    minVln_c = Math.Min(minVln_c, vln_c);
+                    minVln_avg = Math.Min(minVln_avg, vln_avg);
+                    minVll_ab = Math.Min(minVll_ab, vll_ab);
+                    minVll_bc = Math.Min(minVll_bc, vll_bc);
+                    minVll_ca = Math.Min(minVll_ca, vll_ca);
+                    minVll_avg = Math.Min(minVll_avg, vll_avg);
+                    minPF = Math.Min(minPF, pf);
+                    minFrequency = Math.Min(minFrequency, frequency);
+
+                    maxKW_a = Math.Max(maxKW_a, kW_a);
+                    maxKW_b = Math.Max(maxKW_b, kW_b);
+                    maxKW_c = Math.Max(maxKW_c, kW_c);
+                    maxKW_tot = Math.Max(maxKW_tot, kW_tot);
+                    maxKvar_a = Math.Max(maxKvar_a, kvar_a);
+                    maxKvar_b = Math.Max(maxKvar_b, kvar_b);
+                    maxKvar_c = Math.Max(maxKvar_c, kvar_c);
+                    maxKvar_tot = Math.Max(maxKvar_tot, kvar_tot);
+                    maxKVA_a = Math.Max(maxKVA_a, kVA_a);
+                    maxKVA_b = Math.Max(maxKVA_b, kVA_b);
+                    maxKVA_c = Math.Max(maxKVA_c, kVA_c);
+                    maxKVA_tot = Math.Max(maxKVA_tot, kVA_tot);
+                    maxI_a = Math.Max(maxI_a, i_a);
+                    maxI_b = Math.Max(maxI_b, i_b);
+                    maxI_c = Math.Max(maxI_c, i_c);
+                    maxI_avg = Math.Max(maxI_avg, i_avg);
+
+                    lastKWh = kWh;
+                    lastKvarh = kvarh;
+                    lastKVAh = kVAh;
+
+                    // 存取到每3秒鐘的CSV檔案中
+                    string fileName = csvDirectory + DateTime.Now.ToString("yyyyMMdd") + "_3s.csv";
+                    string csvData = $"{now.ToString("yyyy/MM/dd")},{now.ToString("HH:mm:ss")},{now.ToString("ddd", new CultureInfo("en-US")).ToUpper()},{meterID},{vln_a},{vln_b},{vln_c},{vln_avg},{vll_ab},{vll_bc},{vll_ca},{vll_avg}," +
+                                      $"{i_a},{i_b},{i_c},{i_avg},{frequency},{kW_a},{kW_b},{kW_c},{kW_tot},{kvar_a},{kvar_b},{kvar_c},{kvar_tot},{kVA_a},{kVA_b},{kVA_c},{kVA_tot},{pf},{kWh},{kvarh},{kVAh}";
+
+                    File.AppendAllText(fileName, csvData + "\n");
+
+                    // 更新對應的Label
+                    UpdateLabel(meterID, csvData);
+
+                    AddToConditionCheckListView("成功讀取 " + meterID + " 的數據");
+                }
+                catch (Exception ex)
+                {
+                    AddToConditionCheckListView("無法讀取 " + meterID + " 的數據");
+                    AddToAlarmHistoryListView("警報：無法讀取 " + meterID + " 的數據");
+                }
+            }
+        }
+
+        private void Record30MinData(DateTime now)
+        {
+            foreach (int meterID in meterIDs)
+            {
+                string fileName30Min = csvDirectory + DateTime.Now.ToString("yyyyMMdd") + "_30m.csv";
+
+                // 構建30分鐘內的數據記錄
+                string csvData30Min = $"{now.ToString("yyyy/MM/dd")},{now.ToString("HH:mm:ss")},{now.ToString("ddd", new CultureInfo("en-US")).ToUpper()},{meterID},{minVln_a},{minVln_b},{minVln_c},{minVln_avg}," +
+                                      $"{minVll_ab},{minVll_bc},{minVll_ca},{minVll_avg},{maxI_a},{maxI_b},{maxI_c},{maxI_avg}," +
+                                      $"{minFrequency},{maxKW_a},{maxKW_b},{maxKW_c},{maxKW_tot},{maxKvar_a},{maxKvar_b},{maxKvar_c},{maxKvar_tot}," +
+                                      $"{maxKVA_a},{maxKVA_b},{maxKVA_c},{maxKVA_tot},{minPF},{lastKWh},{lastKvarh},{lastKVAh}";
+
+                File.AppendAllText(fileName30Min, csvData30Min + "\n");
+            }
+
+            // 重置
+
+        private void Reset30MinVariables()
+            {
+                minVln_a = float.MaxValue; minVln_b = float.MaxValue; minVln_c = float.MaxValue; minVln_avg = float.MaxValue;
+                minVll_ab = float.MaxValue; minVll_bc = float.MaxValue; minVll_ca = float.MaxValue; minVll_avg = float.MaxValue;
+                minPF = float.MaxValue;
+                minFrequency = float.MaxValue;
+                maxKW_a = float.MinValue; maxKW_b = float.MinValue; maxKW_c = float.MinValue; maxKW_tot = float.MinValue;
+                maxKvar_a = float.MinValue; maxKvar_b = float.MinValue; maxKvar_c = float.MinValue; maxKvar_tot = float.MinValue;
+                maxKVA_a = float.MinValue; maxKVA_b = float.MinValue; maxKVA_c = float.MinValue; maxKVA_tot = float.MinValue;
+                maxI_a = float.MinValue; maxI_b = float.MinValue; maxI_c
+            }
+
+
+
+        }
+    }
